@@ -1,13 +1,20 @@
-﻿class Datapoint
-{
-    public string metric { get; set; }
-    public double value { get; set; }
-    public string source { get; set; }
+﻿/**
+ * Copyright (C) 2014 SignalFuse, Inc.
+ */
 
-    public Datapoint(string metric, double value, string source)
+namespace SignalFxBackend
+{
+    class Datapoint
     {
-        this.metric = metric;
-        this.value = value;
-        this.source = source;
+        public string metric { get; set; }
+        public double value { get; set; }
+        public string source { get; set; }
+
+        public Datapoint(string metric, double value, string source)
+        {
+            this.metric = metric;
+            this.value = value;
+            this.source = source;
+        }
     }
 }

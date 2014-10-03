@@ -1,4 +1,7 @@
-﻿using RestSharp;
+﻿/**
+ * Copyright (C) 2014 SignalFuse, Inc.
+ */
+using RestSharp;
 using statsd.net.core;
 using statsd.net.core.Backends;
 using statsd.net.core.Structures;
@@ -24,10 +27,10 @@ using System.Threading;
 using RestSharp.Serializers;
 
 
-namespace SignalFuseBackend
+namespace SignalFxBackend
 {
     [Export(typeof(IBackend))]
-    public class SignalFuseBackend : IBackend
+    public class SignalFxBackend : IBackend
     {
         public const string DEFAULT_API_URL = "https://api.signalfuse.com";
         public bool IsActive { get; private set; }
