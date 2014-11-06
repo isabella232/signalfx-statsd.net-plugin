@@ -84,10 +84,16 @@ namespace SignalFxBackend
             };
             _retryStrategy = new Incremental(_config.NumRetries, _config.RetryDelay, TimeSpan.FromSeconds(2));
 
-            var executedCallBack = new AutoResetEvent(false);
-            getInstance(executedCallBack);
-            executedCallBack.WaitOne();
-
+            if (configElement.Attribute("source") == null)
+            {
+                var executedCallBack = new AutoResetEvent(false);
+                getInstance(executedCallBack);
+                executedCallBack.WaitOne();
+            }
+            else
+            {
+                this._source = configElement.Attribute("source").Value;
+            }
             IsActive = true;
         }
 
