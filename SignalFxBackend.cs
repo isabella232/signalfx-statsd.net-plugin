@@ -42,8 +42,8 @@ namespace SignalFxBackend
         private SignalFxBackendConfiguration _config;
         private RestClient _client;
         private ActionBlock<Bucket> _processBlock;
-        private BatchBlock<Datapoint> _batchBlock;
-        private ActionBlock<Datapoint[]> _outputBlock;
+        private BatchBlock<TypeDatapoint> _batchBlock;
+        private ActionBlock<TypeDatapoint[]> _outputBlock;
         private RetryPolicy<SignalFxErrorDetectionStrategy> _retryPolicy;
         private Incremental _retryStrategy;
 
@@ -64,8 +64,8 @@ namespace SignalFxBackend
             _config = config;
 
             _processBlock = new ActionBlock<Bucket>(bucket => ProcessBucket(bucket), Utility.UnboundedExecution());
-            _batchBlock = new BatchBlock<Datapoint>(config.MaxBatchSize);
-            _outputBlock = new ActionBlock<Datapoint[]>(datapoint => ProcessDatapoints(datapoint), Utility.OneAtATimeExecution());
+            _batchBlock = new BatchBlock<TypeDatapoint>(config.MaxBatchSize);
+            _outputBlock = new ActionBlock<TypeDatapoint[]>(datapoint => ProcessDatapoints(datapoint), Utility.OneAtATimeExecution());
             _batchBlock.LinkTo(_outputBlock);
 
             var apiURL = DEFAULT_API_URL;
@@ -84,7 +84,7 @@ namespace SignalFxBackend
             };
             _retryStrategy = new Incremental(_config.NumRetries, _config.RetryDelay, TimeSpan.FromSeconds(2));
 
-            if (configElement.Attribute("source") == null)
+            if (configElement.Attribute("source") == null || configElement.Attribute("source").Value.Length == 0)
             {
                 var executedCallBack = new AutoResetEvent(false);
                 getInstance(executedCallBack);
@@ -114,15 +114,14 @@ namespace SignalFxBackend
                     var counterBucket = bucket as CounterBucket;
                     foreach (var counter in counterBucket.Items)
                     {
-                        _batchBlock.Post(new Datapoint(counterBucket.RootNamespace + counter.Key, counter.Value, this._source));
-                        Console.WriteLine(string.Format(CultureInfo.InvariantCulture, "{0}:{1}|c", counter.Key, counter.Value));
+                        _batchBlock.Post(new TypeDatapoint(MetricType.COUNTER, new Datapoint(counterBucket.RootNamespace + counter.Key, counter.Value, this._source)));
                     }
                     break;
                 case BucketType.Gauge:
                     var gaugeBucket = bucket as GaugesBucket;
                     foreach (var gauge in gaugeBucket.Gauges)
                     {
-                        _batchBlock.Post(new Datapoint(gaugeBucket.RootNamespace + gauge.Key, gauge.Value, this._source));
+                        _batchBlock.Post(new TypeDatapoint(MetricType.GAUGE, new Datapoint(gaugeBucket.RootNamespace + gauge.Key, gauge.Value, this._source)));
                     }
                     break;
                 case BucketType.Percentile:
@@ -132,8 +131,8 @@ namespace SignalFxBackend
                     {
                         if (percentileBucket.TryComputePercentile(pair, out percentileValue))
                         {
-                            _batchBlock.Post(new Datapoint(percentileBucket.RootNamespace + pair.Key + percentileBucket.PercentileName,
-                              percentileValue, this._source));
+                            _batchBlock.Post(new TypeDatapoint(MetricType.GAUGE, new Datapoint(percentileBucket.RootNamespace + pair.Key + percentileBucket.PercentileName,
+                              percentileValue, this._source)));
                         }
                     }
                     break;
@@ -167,16 +166,28 @@ namespace SignalFxBackend
             get { return 0; }
         }
 
-        private void ProcessDatapoints(Datapoint[] dps)
+        private void ProcessDatapoints(TypeDatapoint[] typeDatapoints)
         {
+            var datapoints = new Datapoints();
             var stringbuilder = new StringBuilder();
-            foreach (var dp in dps)
+            foreach (var typeDatapoint in typeDatapoints)
             {
-                stringbuilder.Append(SimpleJson.SerializeObject(dp));
+                switch (typeDatapoint.type)
+                {
+                    case MetricType.GAUGE:
+                        datapoints.gauge.Add(typeDatapoint.data);
+                        break;
+                    case MetricType.COUNTER:
+                        datapoints.counter.Add(typeDatapoint.data);
+                        break;
+                }
             }
-            var request = new RestSharp.RestRequest("/datapoint/", RestSharp.Method.POST).AddHeader("X-SF-TOKEN", this._config.Token);
+
+
+            stringbuilder.Append(SimpleJson.SerializeObject(datapoints));
+            var request = new RestSharp.RestRequest("/v2/datapoint", RestSharp.Method.POST).AddHeader("X-SF-TOKEN", this._config.Token);
             request.AddParameter("", stringbuilder.ToString(), ParameterType.RequestBody);
-           
+            request.AddHeader("Content-Type", "application/json");
 
             _retryPolicy.ExecuteAction(() =>
                 {
@@ -187,7 +198,7 @@ namespace SignalFxBackend
                     }
                     else if (result.StatusCode != HttpStatusCode.OK)
                     {
-                        throw new Exception(String.Format("Request could not be processed. Server said {0}", result.StatusCode.ToString()));
+                      _log.Warn(String.Format("Request could not be processed. Server said {0}", result.StatusCode.ToString()));
                     }
                 });
         }
@@ -226,15 +237,49 @@ namespace SignalFxBackend
 
             public SignalFxBackendConfiguration(string token, TimeSpan retryDelay, int numRetries, TimeSpan postTimeout, int maxBatchSize)
             {
-               this.Token = token;
+                this.Token = token;
                 this.RetryDelay = retryDelay;
                 this.NumRetries = numRetries;
                 this.PostTimeout = postTimeout;
                 this.MaxBatchSize = maxBatchSize;
             }
         }
+
+        public enum MetricType
+        {
+            GAUGE,
+            COUNTER,
+            ENUM,
+            CUMULATIVE_COUNTER
+        }
+
+        private class TypeDatapoint
+        {
+            public MetricType type { get; set; }
+            public Datapoint data { get; set; }
+
+            public TypeDatapoint(MetricType type, Datapoint data)
+            {
+                this.type = type;
+                this.data = data;
+            }
+        }
+
+        private class Datapoints
+        {
+            public List<Datapoint> gauge { get; set; }
+            public List<Datapoint> counter { get; set; }
+            public List<Datapoint> cumulative_counter { get; set; }
+
+            public Datapoints()
+            {
+                this.gauge = new List<Datapoint>();
+                this.counter = new List<Datapoint>();
+                this.cumulative_counter = new List<Datapoint>();
+            }
+        }
     }
 
-    
+
 
 }
