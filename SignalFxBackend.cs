@@ -138,9 +138,14 @@ namespace SignalFxBackend
                     break;
                 case BucketType.Timing:
                     var timingBucket = bucket as LatencyBucket;
-                    foreach (var timing in timingBucket.Latencies)
+                    foreach (var latency in timingBucket.Latencies)
                     {
-
+                        _batchBlock.Post(new TypeDatapoint(MetricType.GAUGE, new Datapoint(timingBucket.RootNamespace + latency.Key + ".count", latency.Value.Count, this._source)));
+                        _batchBlock.Post(new TypeDatapoint(MetricType.GAUGE, new Datapoint(timingBucket.RootNamespace + latency.Key + ".min", latency.Value.Min, this._source)));
+                        _batchBlock.Post(new TypeDatapoint(MetricType.GAUGE, new Datapoint(timingBucket.RootNamespace + latency.Key + ".max", latency.Value.Max, this._source)));
+                        _batchBlock.Post(new TypeDatapoint(MetricType.GAUGE, new Datapoint(timingBucket.RootNamespace + latency.Key + ".mean", latency.Value.Mean, this._source)));
+                        _batchBlock.Post(new TypeDatapoint(MetricType.GAUGE, new Datapoint(timingBucket.RootNamespace + latency.Key + ".sum", latency.Value.Sum, this._source)));
+                        _batchBlock.Post(new TypeDatapoint(MetricType.GAUGE, new Datapoint(timingBucket.RootNamespace + latency.Key + ".sumSquares", latency.Value.SumSquares, this._source)));
                     }
                     break;
             }
@@ -182,7 +187,6 @@ namespace SignalFxBackend
                         break;
                 }
             }
-
 
             stringbuilder.Append(SimpleJson.SerializeObject(datapoints));
             var request = new RestSharp.RestRequest("/v2/datapoint", RestSharp.Method.POST).AddHeader("X-SF-TOKEN", this._config.Token);
