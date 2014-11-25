@@ -83,17 +83,7 @@ namespace SignalFxBackend
                 _log.Warn(String.Format("Retry {0} failed. Trying again. Delay {1}, Error: {2}", args.CurrentRetryCount, args.Delay, args.LastException.Message), args.LastException);
             };
             _retryStrategy = new Incremental(_config.NumRetries, _config.RetryDelay, TimeSpan.FromSeconds(2));
-
-            if (configElement.Attribute("source") == null || configElement.Attribute("source").Value.Length == 0)
-            {
-                var executedCallBack = new AutoResetEvent(false);
-                getInstance(executedCallBack);
-                executedCallBack.WaitOne();
-            }
-            else
-            {
-                this._source = configElement.Attribute("source").Value;
-            }
+            _source = configElement.Attribute("source").Value;
             IsActive = true;
         }
 
@@ -202,21 +192,9 @@ namespace SignalFxBackend
                     }
                     else if (result.StatusCode != HttpStatusCode.OK)
                     {
-                      _log.Warn(String.Format("Request could not be processed. Server said {0}", result.StatusCode.ToString()));
+                        _log.Warn(String.Format("Request could not be processed. Server said {0}", result.StatusCode.ToString()));
                     }
                 });
-        }
-
-        private async void getInstance(AutoResetEvent are)
-        {
-            using (var client = new HttpClient())
-            {
-                client.BaseAddress = new Uri("http://169.254.169.254");
-                HttpResponseMessage response = await client.GetAsync("/latest/meta-data/instance-id");
-                response.EnsureSuccessStatusCode();
-                _source = await response.Content.ReadAsStringAsync();
-                are.Set();
-            }
         }
 
         private class SignalFxErrorDetectionStrategy : ITransientErrorDetectionStrategy
