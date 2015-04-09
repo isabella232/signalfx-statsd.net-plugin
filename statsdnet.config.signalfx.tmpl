@@ -1,0 +1,28 @@
+﻿<?xml version="1.0" encoding="utf-8" ?>
+<statsdnet name="statsdnet">
+  <listeners>
+    <udp port="12000" />
+  </listeners>
+  <aggregation flushInterval="5s">
+    <gauges namespace="" removeZeroGauges="false" />
+    <counters namespace="" />
+    <sets namespace="" />
+    <calendargrams namespace="" />
+    <timers namespace="" calculateSumSquares="true">
+      <percentile name="p90-5min" threshold="90" flushInterval="5m" />
+      <percentile name="p90-1hour" threshold="90" flushInterval="1h" />
+      <percentile name="p50-1hour" threshold="50" flushInterval="1h" />
+    </timers>
+  </aggregation>
+  <backends>
+    <signalfx apiToken=""
+              sourceType=""
+              numRetries="3"
+              retryDelay="5s"
+              postTimeout="30s"
+              maxTimeBetweenBatches="00:00:05"
+              maxBatchSize="10000">
+    </signalfx>
+    <console />
+  </backends>
+</statsdnet>

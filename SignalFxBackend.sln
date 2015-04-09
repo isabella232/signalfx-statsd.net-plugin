@@ -1,9 +1,42 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
-# Visual Studio Express 2013 for Windows Desktop
-VisualStudioVersion = 12.0.30723.0
+# Visual Studio 2013
+VisualStudioVersion = 12.0.31101.0
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SignalFxBackend", "SignalFxBackend.csproj", "{A31FE29F-67BB-4E35-A95D-65C1DE413E16}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "statsd.net", "..\statsd.net\statsd.net\statsd.net.csproj", "{E2212771-D19D-4CA9-92ED-E254DA99FD84}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "statsd.net-Tests", "..\statsd.net\statsd.net-Tests\statsd.net-Tests.csproj", "{347012E3-D17B-44E2-A4C6-C09352E39C57}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DemoDataFeeder", "..\statsd.net\DemoDataFeeder\DemoDataFeeder.csproj", "{89D3FEE2-CB2E-4D7F-AE5A-5BD7F6E5039A}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Sql Backend Scripts", "Sql Backend Scripts", "{22D69892-EF16-4EA5-AD0D-1D02490C6571}"
+	ProjectSection(SolutionItems) = preProject
+		..\statsd.net\Install DB Objects.sql = ..\statsd.net\Install DB Objects.sql
+		..\statsd.net\Install SQL Tables.sql = ..\statsd.net\Install SQL Tables.sql
+	EndProjectSection
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Documentation", "Documentation", "{CF42D423-DE3F-4966-9A2E-2CC2583AB2FD}"
+	ProjectSection(SolutionItems) = preProject
+		..\statsd.net\CHANGELOG.md = ..\statsd.net\CHANGELOG.md
+		..\statsd.net\README.md = ..\statsd.net\README.md
+	EndProjectSection
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = ".nuget", ".nuget", "{18963401-B5C1-402C-B83D-8BAE137FE6D7}"
+	ProjectSection(SolutionItems) = preProject
+		..\statsd.net\.nuget\NuGet.Config = ..\statsd.net\.nuget\NuGet.Config
+		.nuget\NuGet.Config = .nuget\NuGet.Config
+		..\statsd.net\.nuget\NuGet.exe = ..\statsd.net\.nuget\NuGet.exe
+		.nuget\NuGet.exe = .nuget\NuGet.exe
+		.nuget\NuGet.targets = .nuget\NuGet.targets
+	EndProjectSection
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "statsd.net.shared", "..\statsd.net\statsd.net.shared\statsd.net.shared.csproj", "{BE150548-D5EB-4289-8706-3EA475175592}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "statsd.net.core", "..\statsd.net\statsd.net.core\statsd.net.core.csproj", "{9D5C34B4-3623-4234-BC82-F9DA37204971}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ExampleExternalBackend", "..\statsd.net\ExampleExternalBackend\ExampleExternalBackend.csproj", "{9075F1AA-EAEA-44B1-8801-7F1A2FA6722D}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -15,8 +48,35 @@ Global
 		{A31FE29F-67BB-4E35-A95D-65C1DE413E16}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{A31FE29F-67BB-4E35-A95D-65C1DE413E16}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{A31FE29F-67BB-4E35-A95D-65C1DE413E16}.Release|Any CPU.Build.0 = Release|Any CPU
+		{E2212771-D19D-4CA9-92ED-E254DA99FD84}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E2212771-D19D-4CA9-92ED-E254DA99FD84}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E2212771-D19D-4CA9-92ED-E254DA99FD84}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E2212771-D19D-4CA9-92ED-E254DA99FD84}.Release|Any CPU.Build.0 = Release|Any CPU
+		{347012E3-D17B-44E2-A4C6-C09352E39C57}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{347012E3-D17B-44E2-A4C6-C09352E39C57}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{347012E3-D17B-44E2-A4C6-C09352E39C57}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{347012E3-D17B-44E2-A4C6-C09352E39C57}.Release|Any CPU.Build.0 = Release|Any CPU
+		{89D3FEE2-CB2E-4D7F-AE5A-5BD7F6E5039A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{89D3FEE2-CB2E-4D7F-AE5A-5BD7F6E5039A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{89D3FEE2-CB2E-4D7F-AE5A-5BD7F6E5039A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{89D3FEE2-CB2E-4D7F-AE5A-5BD7F6E5039A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{BE150548-D5EB-4289-8706-3EA475175592}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{BE150548-D5EB-4289-8706-3EA475175592}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{BE150548-D5EB-4289-8706-3EA475175592}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{BE150548-D5EB-4289-8706-3EA475175592}.Release|Any CPU.Build.0 = Release|Any CPU
+		{9D5C34B4-3623-4234-BC82-F9DA37204971}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9D5C34B4-3623-4234-BC82-F9DA37204971}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9D5C34B4-3623-4234-BC82-F9DA37204971}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9D5C34B4-3623-4234-BC82-F9DA37204971}.Release|Any CPU.Build.0 = Release|Any CPU
+		{9075F1AA-EAEA-44B1-8801-7F1A2FA6722D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9075F1AA-EAEA-44B1-8801-7F1A2FA6722D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9075F1AA-EAEA-44B1-8801-7F1A2FA6722D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9075F1AA-EAEA-44B1-8801-7F1A2FA6722D}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		EnterpriseLibraryConfigurationToolBinariesPath = packages\TransientFaultHandling.Core.5.1.1209.1\lib\NET4
 	EndGlobalSection
 EndGlobal

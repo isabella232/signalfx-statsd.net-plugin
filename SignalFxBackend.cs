@@ -1,8 +1,11 @@
-﻿/**
- * Copyright (C) 2014 SignalFuse, Inc.
- */
-using Microsoft.Practices.TransientFaultHandling;
-using RestSharp;
+﻿//
+// Copyright (C) 2015 SignalFx, Inc.
+//
+
+using com.signalfx.metrics.protobuf;
+using log4net;
+using SignalFxBackend.Configuration;
+using SignalFxBackend.Helpers;
 using statsd.net.core;
 using statsd.net.core.Backends;
 using statsd.net.core.Structures;
@@ -12,21 +15,11 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.ComponentModel.Composition;
-using System.Globalization;
 using System.IO;
-using System.Linq;
-using System.Net.Http;
-using System.Net.Http.Headers;
-using System.Net.NetworkInformation;
-using System.Reflection;
-using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Threading.Tasks.Dataflow;
 using System.Xml.Linq;
-using log4net;
-using System.Threading;
-using RestSharp.Serializers;
-using System.Net;
 
 
 namespace SignalFxBackend
@@ -34,20 +27,29 @@ namespace SignalFxBackend
     [Export(typeof(IBackend))]
     public class SignalFxBackend : IBackend
     {
-        public const string DEFAULT_API_URL = "https://api.signalfuse.com";
+        private static readonly string DEFAULT_URI = "https://ingest.signalfx.com";
+        private static readonly int MAX_DATAPOINTS_PER_MESSAGE = 10000;
+        private static readonly string INSTANCE_ID_DIMENSION = "InstanceId";
+        private static readonly string METRIC_DIMENSION = "metric";
+        private static readonly string SOURCE_DIMENSION = "source";
+        private static readonly string SF_SOURCE = "sf_source";
+        private static readonly HashSet<string> IGNORE_DIMENSIONS = new HashSet<string>();
+        static SignalFxBackend()
+        {
+            IGNORE_DIMENSIONS.Add(SOURCE_DIMENSION);
+            IGNORE_DIMENSIONS.Add(METRIC_DIMENSION);
+        }
         public bool IsActive { get; private set; }
         private Task _completionTask;
         private ILog _log;
-        private string _source;
+        private ISignalFxReporter _reporter;
         private SignalFxBackendConfiguration _config;
-        private RestClient _client;
         private ActionBlock<Bucket> _processBlock;
         private BatchBlock<TypeDatapoint> _batchBlock;
         private ActionBlock<TypeDatapoint[]> _outputBlock;
-        private RetryPolicy<SignalFxErrorDetectionStrategy> _retryPolicy;
-        private Incremental _retryStrategy;
+        private Timer _triggerBatchTimer;
 
-        public string Name { get { return "Signalfx"; } }
+        public string Name { get { return "SignalFx"; } }
 
         public void Configure(string collectorName, XElement configElement, ISystemMetricsService systemMetrics)
         {
@@ -55,37 +57,121 @@ namespace SignalFxBackend
             _completionTask = new Task(() => IsActive = false);
             _log = SuperCheapIOC.Resolve<ILog>();
 
-            var config = new SignalFxBackendConfiguration(token: configElement.Attribute("token").Value,
-                numRetries: configElement.ToInt("numRetries"),
-                retryDelay: Utility.ConvertToTimespan(configElement.Attribute("retryDelay").Value),
-                postTimeout: Utility.ConvertToTimespan(configElement.Attribute("postTimeout").Value),
-                maxBatchSize: configElement.ToInt("maxBatchSize")
-                );
-            _config = config;
+
+            _config = parseConfig(configElement);
+            _reporter = new SignalFxReporter(_config.BaseURI, _config.ApiToken, _config.PostTimeout);
 
             _processBlock = new ActionBlock<Bucket>(bucket => ProcessBucket(bucket), Utility.UnboundedExecution());
-            _batchBlock = new BatchBlock<TypeDatapoint>(config.MaxBatchSize);
+            _batchBlock = new BatchBlock<TypeDatapoint>(_config.MaxBatchSize);
             _outputBlock = new ActionBlock<TypeDatapoint[]>(datapoint => ProcessDatapoints(datapoint), Utility.OneAtATimeExecution());
             _batchBlock.LinkTo(_outputBlock);
 
-            var apiURL = DEFAULT_API_URL;
-            if (configElement.Attribute("api_url") != null)
-            {
-                apiURL = configElement.Attribute("api_url").Value;
-            }
-            _client = new RestClient(apiURL);
-            _client.UserAgent = "statsd.net-signalfx-backend/" + Assembly.GetEntryAssembly().GetName().Version.ToString();
-            _client.Timeout = (int)_config.PostTimeout.TotalMilliseconds;
-
-            _retryPolicy = new RetryPolicy<SignalFxErrorDetectionStrategy>(_config.NumRetries);
-            _retryPolicy.Retrying += (sender, args) =>
-            {
-                _log.Warn(String.Format("Retry {0} failed. Trying again. Delay {1}, Error: {2}", args.CurrentRetryCount, args.Delay, args.LastException.Message), args.LastException);
-            };
-            _retryStrategy = new Incremental(_config.NumRetries, _config.RetryDelay, TimeSpan.FromSeconds(2));
-            _source = configElement.Attribute("source").Value;
+            _triggerBatchTimer = new Timer((state) => trigger(state), null, TimeSpan.FromSeconds(1), _config.MaxTimeBetweenBatches);
             IsActive = true;
         }
+
+        private void trigger(object state)
+        {
+            _batchBlock.TriggerBatch();
+        }
+
+        private SignalFxBackendConfiguration parseConfig(XElement configElement)
+        {
+            var apiToken = getRequiredStringConfig(configElement, "apiToken");
+            var defaultDimensionsNode = configElement.Element("defaultDimensions");
+            IDictionary<string, string> defaultDimensions = new Dictionary<string, string>();
+            if (defaultDimensionsNode != null)
+            {
+                foreach (var defaultDimensionNode in defaultDimensionsNode.Elements("defaultDimension"))
+                {
+                    string name = getRequiredStringConfig(defaultDimensionNode, "name");
+                    string value = getRequiredStringConfig(defaultDimensionNode, "value");
+                    if (!String.IsNullOrEmpty(name) && !String.IsNullOrEmpty(value))
+                    {
+                        defaultDimensions[name] = value;
+                    }
+                }
+            }
+
+            var awsIntegrationNode = configElement.Attribute("awsIntegration");
+            if (awsIntegrationNode != null && configElement.ToBoolean("awsIntegration"))
+            {
+                var awsRequestor = new WebRequestor("http://169.254.169.254/latest/meta-data/instance-id")
+                        .WithTimeout(1000 * 60)
+                        .WithMethod("GET");
+
+                using (var resp = awsRequestor.Send())
+                {
+                    defaultDimensions[INSTANCE_ID_DIMENSION] = new StreamReader(resp).ReadToEnd();
+                }
+            }
+
+            var baseURI = getOptionalStringConfig(configElement, "baseURI", DEFAULT_URI);
+
+            var sourceType = getRequiredStringConfig(configElement, "sourceType");
+            string source;
+            switch (sourceType)
+            {
+                case "netbios":
+                    source = System.Environment.MachineName;
+                    break;
+                case "dns":
+                    source = System.Net.Dns.GetHostName();
+                    break;
+                case "fqdn":
+                    string domainName = System.Net.NetworkInformation.IPGlobalProperties.GetIPGlobalProperties().DomainName;
+                    string hostName = System.Net.Dns.GetHostName();
+
+                    if (!hostName.EndsWith(domainName))  // if hostname does not already include domain name
+                    {
+                        hostName += "." + domainName;   // add the domain name part
+                    }
+                    source = hostName;
+                    break;
+                case "custom":
+                    source = getRequiredStringConfig(configElement, "sourceValue", " when \"sourceType\" is \"custom\"");
+                    break;
+                default:
+                    throw new Exception("sourceType attribute must be one of netbios, dns, fqdn, or custom(with source attribute set) on " + configElement);
+            }
+
+            var maxBatchSize = getOptionalIntConfig(configElement, "maxBatchSize", MAX_DATAPOINTS_PER_MESSAGE);
+            var maxTimeBetweenBatches = getOptionalTimeConfig(configElement, "maxWaitBetweenBatches", Utility.ConvertToTimespan("5s"));
+            var retryDelay = getOptionalTimeConfig(configElement, "retryDelay", Utility.ConvertToTimespan("1s"));
+            var postTimeout = getOptionalTimeConfig(configElement, "postTimeout", Utility.ConvertToTimespan("1s"));
+            return new SignalFxBackendConfiguration(apiToken, defaultDimensions, baseURI, maxBatchSize, source,
+                maxTimeBetweenBatches, retryDelay, postTimeout);
+        }
+
+        private TimeSpan getOptionalTimeConfig(XElement configElement, string configName, TimeSpan defaultValue)
+        {
+            var attr = configElement.Attribute(configName);
+            return attr != null ? Utility.ConvertToTimespan(attr.Value) : defaultValue;
+
+        }
+
+        private String getRequiredStringConfig(XElement configElement, string configName, string errMsg = "")
+        {
+            var attr = configElement.Attribute(configName);
+            if (attr == null)
+            {
+                throw new Exception(configName + " attribute is required on " + configElement.Name + errMsg);
+            }
+            return attr.Value;
+        }
+
+        private String getOptionalStringConfig(XElement configElement, string configName, string defaultValue)
+        {
+            var attr = configElement.Attribute(configName);
+            return attr != null ? attr.Value : defaultValue;
+        }
+
+        private int getOptionalIntConfig(XElement configElement, string configName, int defaultValue)
+        {
+            var attr = configElement.Attribute(configName);
+            return attr != null ? int.Parse(attr.Value) : defaultValue;
+        }
+
 
         public DataflowMessageStatus OfferMessage(DataflowMessageHeader messageHeader, Bucket bucket, ISourceBlock<Bucket> source, bool consumeToAccept)
         {
@@ -104,14 +190,14 @@ namespace SignalFxBackend
                     var counterBucket = bucket as CounterBucket;
                     foreach (var counter in counterBucket.Items)
                     {
-                        _batchBlock.Post(new TypeDatapoint(MetricType.COUNTER, new Datapoint(counterBucket.RootNamespace + counter.Key, counter.Value, this._source)));
+                        _batchBlock.Post(new TypeDatapoint(MetricType.COUNTER, new Datapoint(counterBucket.RootNamespace + counter.Key.Name, counter.Value, counter.Key.Tags)));
                     }
                     break;
                 case BucketType.Gauge:
                     var gaugeBucket = bucket as GaugesBucket;
                     foreach (var gauge in gaugeBucket.Gauges)
                     {
-                        _batchBlock.Post(new TypeDatapoint(MetricType.GAUGE, new Datapoint(gaugeBucket.RootNamespace + gauge.Key, gauge.Value, this._source)));
+                        _batchBlock.Post(new TypeDatapoint(MetricType.GAUGE, new Datapoint(gaugeBucket.RootNamespace + gauge.Key.Name, gauge.Value, gauge.Key.Tags)));
                     }
                     break;
                 case BucketType.Percentile:
@@ -121,8 +207,8 @@ namespace SignalFxBackend
                     {
                         if (percentileBucket.TryComputePercentile(pair, out percentileValue))
                         {
-                            _batchBlock.Post(new TypeDatapoint(MetricType.GAUGE, new Datapoint(percentileBucket.RootNamespace + pair.Key + percentileBucket.PercentileName,
-                              percentileValue, this._source)));
+                            _batchBlock.Post(new TypeDatapoint(MetricType.GAUGE, new Datapoint(percentileBucket.RootNamespace + pair.Key.Name,
+                              percentileValue, pair.Key.Tags, percentileBucket.PercentileName)));
                         }
                     }
                     break;
@@ -130,12 +216,12 @@ namespace SignalFxBackend
                     var timingBucket = bucket as LatencyBucket;
                     foreach (var latency in timingBucket.Latencies)
                     {
-                        _batchBlock.Post(new TypeDatapoint(MetricType.GAUGE, new Datapoint(timingBucket.RootNamespace + latency.Key + ".count", latency.Value.Count, this._source)));
-                        _batchBlock.Post(new TypeDatapoint(MetricType.GAUGE, new Datapoint(timingBucket.RootNamespace + latency.Key + ".min", latency.Value.Min, this._source)));
-                        _batchBlock.Post(new TypeDatapoint(MetricType.GAUGE, new Datapoint(timingBucket.RootNamespace + latency.Key + ".max", latency.Value.Max, this._source)));
-                        _batchBlock.Post(new TypeDatapoint(MetricType.GAUGE, new Datapoint(timingBucket.RootNamespace + latency.Key + ".mean", latency.Value.Mean, this._source)));
-                        _batchBlock.Post(new TypeDatapoint(MetricType.GAUGE, new Datapoint(timingBucket.RootNamespace + latency.Key + ".sum", latency.Value.Sum, this._source)));
-                        _batchBlock.Post(new TypeDatapoint(MetricType.GAUGE, new Datapoint(timingBucket.RootNamespace + latency.Key + ".sumSquares", latency.Value.SumSquares, this._source)));
+                        _batchBlock.Post(new TypeDatapoint(MetricType.GAUGE, new Datapoint(timingBucket.RootNamespace + latency.Key.Name, latency.Value.Count, latency.Key.Tags, ".count")));
+                        _batchBlock.Post(new TypeDatapoint(MetricType.GAUGE, new Datapoint(timingBucket.RootNamespace + latency.Key.Name, latency.Value.Min,  latency.Key.Tags, ".min")));
+                        _batchBlock.Post(new TypeDatapoint(MetricType.GAUGE, new Datapoint(timingBucket.RootNamespace + latency.Key.Name, latency.Value.Max,  latency.Key.Tags, ".max")));
+                        _batchBlock.Post(new TypeDatapoint(MetricType.GAUGE, new Datapoint(timingBucket.RootNamespace + latency.Key.Name, latency.Value.Mean,  latency.Key.Tags, ".mean")));
+                        _batchBlock.Post(new TypeDatapoint(MetricType.GAUGE, new Datapoint(timingBucket.RootNamespace + latency.Key.Name, latency.Value.Sum,  latency.Key.Tags, ".sum")));
+                        _batchBlock.Post(new TypeDatapoint(MetricType.GAUGE, new Datapoint(timingBucket.RootNamespace + latency.Key.Name, latency.Value.SumSquares,  latency.Key.Tags, ".sumSquares")));
                     }
                     break;
             }
@@ -163,77 +249,32 @@ namespace SignalFxBackend
 
         private void ProcessDatapoints(TypeDatapoint[] typeDatapoints)
         {
-            var datapoints = new Datapoints();
-            var stringbuilder = new StringBuilder();
+            _triggerBatchTimer.Change(_config.MaxTimeBetweenBatches, _config.MaxTimeBetweenBatches);
+
+            var msg = new DataPointUploadMessage();
             foreach (var typeDatapoint in typeDatapoints)
             {
-                switch (typeDatapoint.type)
-                {
-                    case MetricType.GAUGE:
-                        datapoints.gauge.Add(typeDatapoint.data);
-                        break;
-                    case MetricType.COUNTER:
-                        datapoints.counter.Add(typeDatapoint.data);
-                        break;
-                }
+                msg.datapoints.Add(typeDatapoint.toDataPoint(_config.DefaultDimensions, _config.DefaultSource));
             }
 
-            stringbuilder.Append(SimpleJson.SerializeObject(datapoints));
-            var request = new RestSharp.RestRequest("/v2/datapoint", RestSharp.Method.POST).AddHeader("X-SF-TOKEN", this._config.Token);
-            request.AddParameter("", stringbuilder.ToString(), ParameterType.RequestBody);
-            request.AddHeader("Content-Type", "application/json");
+            _reporter.Send(msg);
+            /*
 
-            _retryPolicy.ExecuteAction(() =>
-                {
-                    var result = _client.Execute(request);
-                    if (result.StatusCode == HttpStatusCode.Unauthorized)
-                    {
-                        throw new UnauthorizedAccessException("SignalFuse reports that your access is not authorised. Is your API key and email address correct?");
-                    }
-                    else if (result.StatusCode != HttpStatusCode.OK)
-                    {
-                        _log.Warn(String.Format("Request could not be processed. Server said {0}", result.StatusCode.ToString()));
-                    }
-                });
+             _retryPolicy.ExecuteAction(() =>
+                 {
+                     var result = _client.Execute(request);
+                     if (result.StatusCode == HttpStatusCode.Unauthorized)
+                     {
+                         throw new UnauthorizedAccessException("SignalFuse reports that your access is not authorised. Is your API key correct?");
+                     }
+                     else if (result.StatusCode != HttpStatusCode.OK)
+                     {
+                         _log.Warn(String.Format("Request could not be processed. Server said {0}", result.StatusCode.ToString()));
+                     }
+                 });
+            */
         }
 
-        private class SignalFxErrorDetectionStrategy : ITransientErrorDetectionStrategy
-        {
-            public bool IsTransient(Exception ex)
-            {
-                if (ex is TimeoutException)
-                {
-                    return true;
-                }
-                return false;
-            }
-        }
-
-        private class SignalFxBackendConfiguration
-        {
-            public string Token { get; set; }
-            public TimeSpan RetryDelay { get; set; }
-            public TimeSpan PostTimeout { get; set; }
-            public int MaxBatchSize { get; set; }
-            public int NumRetries { get; set; }
-
-            public SignalFxBackendConfiguration(string token, TimeSpan retryDelay, int numRetries, TimeSpan postTimeout, int maxBatchSize)
-            {
-                this.Token = token;
-                this.RetryDelay = retryDelay;
-                this.NumRetries = numRetries;
-                this.PostTimeout = postTimeout;
-                this.MaxBatchSize = maxBatchSize;
-            }
-        }
-
-        public enum MetricType
-        {
-            GAUGE,
-            COUNTER,
-            ENUM,
-            CUMULATIVE_COUNTER
-        }
 
         private class TypeDatapoint
         {
@@ -245,23 +286,43 @@ namespace SignalFxBackend
                 this.type = type;
                 this.data = data;
             }
-        }
 
-        private class Datapoints
-        {
-            public List<Datapoint> gauge { get; set; }
-            public List<Datapoint> counter { get; set; }
-            public List<Datapoint> cumulative_counter { get; set; }
-
-            public Datapoints()
+            public DataPoint toDataPoint(IDictionary<string, string> defaultDimensions, string defaultSource)
             {
-                this.gauge = new List<Datapoint>();
-                this.counter = new List<Datapoint>();
-                this.cumulative_counter = new List<Datapoint>();
+                DataPoint dataPoint = new DataPoint();
+
+                string metricName = data.dimensions.ContainsKey(METRIC_DIMENSION) ? data.dimensions[METRIC_DIMENSION] : data.metric;
+                string sourceName = data.dimensions.ContainsKey(SOURCE_DIMENSION) ? data.dimensions[SOURCE_DIMENSION] : defaultSource;
+                dataPoint.metric = metricName;
+                dataPoint.metricType = type;
+                dataPoint.source = sourceName;
+                AddDimension(dataPoint, SF_SOURCE, sourceName);
+
+                Datum datum = new Datum();
+                datum.doubleValue = data.value;
+                dataPoint.value = datum;
+                AddDimensions(dataPoint, defaultDimensions);
+                AddDimensions(dataPoint, data.dimensions);
+                return dataPoint;
+            }
+
+            protected void AddDimensions(DataPoint dataPoint, IDictionary<string, string> dimensions)
+            {
+                foreach (KeyValuePair<string, string> entry in dimensions)
+                {
+                    if (!IGNORE_DIMENSIONS.Contains(entry.Key) && !string.IsNullOrEmpty(entry.Value))
+                    {
+                        AddDimension(dataPoint, entry.Key, entry.Value);
+                    }
+                }
+            }
+            protected virtual void AddDimension(DataPoint dataPoint, string key, string value)
+            {
+                Dimension dimension = new Dimension();
+                dimension.key = key;
+                dimension.value = value;
+                dataPoint.dimensions.Add(dimension);
             }
         }
     }
-
-
-
 }

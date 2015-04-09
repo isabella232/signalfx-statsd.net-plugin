@@ -1,0 +1,48 @@
+#!/bin/bash
+
+winpath() {
+   if [ -z "$1" ]; then
+       echo "$@"
+   else
+       if [ -f "$1" ]; then
+           local dir=$(dirname "$1")
+           local fn=$(basename "$1")
+           echo "$(cd "$dir"; echo "$(pwd -W)/$fn")" | sed 's|/|\\|g';
+       else
+           if [ -d "$1" ]; then
+               echo "$(cd "$1"; pwd -W)" | sed 's|/|\\|g';
+           else
+               echo "$1" | sed 's|^/\(.\)/|\1:\\|g; s|/|\\|g';
+           fi
+       fi
+   fi
+}
+
+#!/bin/bash
+# Read Password
+echo -n Code Signing Password: 
+read -s password
+echo
+
+RELEASE_VER=$1
+ZIP_DIR=StatsDNet-${RELEASE_VER}
+WIN_ZIP_DIR=$(winpath $(pwd))\\${ZIP_DIR}
+INSTALL_DIR=${ZIP_DIR}/statsd.net
+ZIP_FILE=${WIN_ZIP_DIR}.zip
+
+# Get statsd.net stuff
+rm -rf ../../statsd.net/statsd.net/bin
+rm -rf bin
+/c/Program\ Files\ \(x86\)/MSBuild/12.0/Bin/MSBuild.exe SignalFxBackend.sln /property:Configuration=Release
+mkdir -p ${INSTALL_DIR}
+cp -r ../statsd.net/statsd.net/bin/Release/{*.dll,*.exe,log4net.config} ${INSTALL_DIR}
+cp -r bin/Release/*.dll ${INSTALL_DIR}
+cp -r statsdnet.config.signalfx.tmpl ${INSTALL_DIR}/statsdnet.config.tmpl
+
+
+cp Install.ps1 ${ZIP_DIR} 
+
+/C/Program\ Files\ \(x86\)/Windows\ Kits/8.1/bin/x64/signtool.exe sign -v -p $password -f "../SignalFx2.pfx" -t "http://timestamp.verisign.com/scripts/timestamp.dll" ${INSTALL_DIR}/*.dll ${INSTALL_DIR}/*.exe ${ZIP_DIR}/Install.ps1
+
+cscript.exe zip.vbs ${WIN_ZIP_DIR} ${ZIP_FILE}
+rm -rf ${ZIP_DIR}
