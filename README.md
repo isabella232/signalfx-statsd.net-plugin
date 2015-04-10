@@ -1,6 +1,9 @@
 # signalfx-statsd.net-plugin
 Plugin for statsd.net (https://github.com/lukevenediger/statsd.net/) to send metrics to SignalFx
 
+You can find the SignalFx version of statsd.net that is released here:
+https://github.com/signalfx/statsd.net/
+
 ### Requirements
 
 * .NET Framework 4+
