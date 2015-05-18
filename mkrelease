@@ -33,10 +33,10 @@ ZIP_FILE=${WIN_ZIP_DIR}.zip
 # Get statsd.net stuff
 rm -rf ../../statsd.net/statsd.net/bin
 rm -rf bin
-/c/Program\ Files\ \(x86\)/MSBuild/12.0/Bin/MSBuild.exe SignalFxBackend.sln /property:Configuration=Release
+/c/Program\ Files\ \(x86\)/MSBuild/12.0/Bin/MSBuild.exe SignalFxBackend.sln /property:Configuration=Release /property:Platform=x64
 mkdir -p ${INSTALL_DIR}
-cp -r ../statsd.net/statsd.net/bin/Release/{*.dll,*.exe,log4net.config} ${INSTALL_DIR}
-cp -r bin/Release/*.dll ${INSTALL_DIR}
+cp -r ../statsd.net/statsd.net/bin/x64/Release/{*.dll,*.exe,log4net.config} ${INSTALL_DIR}
+cp -r bin/x64/Release/*.dll ${INSTALL_DIR}
 cp -r statsdnet.config.signalfx.tmpl ${INSTALL_DIR}/statsdnet.config.tmpl
 
 
